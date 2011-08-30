@@ -235,17 +235,8 @@ IloNumArray
 		pack[order[i]] = 0;
 		sum += Array[order[i]];
 		if(f(pack,a,d,omega) > b + EPS) {
-			if (sum < limit - EPSI) {
-				packFound = true;
-				break;
-			}
-			else 
-				break;
-			/*{
-				pack[order[i]] = 1;
-				sum -= Array[order[i]];
-				i++;
-			}*/
+			packFound = true;
+			break;
 		}
 		else {
 			i++;
@@ -450,71 +441,91 @@ IloNumArray
 	return maximalPack;
 }
 
+IloNum 
+	computeRho(IloNumArray	BinaryArray,
+			   IloNum		indexplus,
+			   IloNum		indexminus,
+			   IloNumArray	a,
+			   IloNumArray	d,
+			   IloNum		omega) {
+	int i, nCols = BinaryArray.getSize();
+	IloEnv env = BinaryArray.getEnv();
+	IloNumArray Array(env, nCols);
+
+	for(i = 0; i < nCols; i++) {
+		Array[i] = BinaryArray[i];
+	}
+	Array[indexminus] = 0;
+	IloNum fval = f(Array, a, d, omega), fvalNew;
+	Array[indexplus] = 1;
+	fvalNew = f(Array, a, d, omega);
+	IloNum rho = fvalNew - fval;
+
+	return rho;
+}
+
 //@method	extendPack					:	To extend a pack inequality for the conic quadratic constraint.
 IloNumArray
 	extendPackIneq(IloNumArray	toExtend,
 				   IloNumArray	a,
 				   IloNumArray	d,
-				   IloNum		omega) {
+				   IloNum		omega,
+				   IloNum		b) {
 
-	int i, j;
+	int i, j, fromIndex;
 	
 	IloEnv env		= toExtend.getEnv();
 	IloNum nCols	= a.getSize();
 
-	
 	IloNumArray fromExtend	= getComplement(toExtend);
 	for (i = 0; i < nCols; i++) {
 		if (a[i] == 0)
 			fromExtend[i] = 0;
 	}
+
+	IloNum delta = f(fromExtend,a,d,omega) - b;
+
 	IloIntArray	toIndices	= findIndices(toExtend);
 	IloNumArray extendedPack(env, toExtend.getSize());
 	
-	for(i = 0; i < toExtend.getSize(); i++)
+	for(i = 0; i < nCols; i++)
 		extendedPack[i] = toExtend[i];
 
-	IloIntArray fromIndices(env);
-	IloNumArray minimumContributor(env,2);
-	IloNum		fval, rho, remVal;
-	bool canExtend = true;
-	while(canExtend && IloSum(fromExtend) > 0) {
-		fromIndices	= findIndices(fromExtend);
-		IloNumArray tempArray(fromExtend);
-		fval		= f(fromExtend, a, d, omega);
-		tempArray[fromIndices[0]] = 0;
-		minimumContributor[0] = fromIndices[0];
-		minimumContributor[1] =  fval - f(tempArray, a, d, omega);
-		tempArray[fromIndices[0]] = 1;
-		for(i = 1; i < fromIndices.getSize(); i++) {
-			tempArray[fromIndices[i]] = 0;
-			rho = fval - f(tempArray, a, d, omega);
-			if(rho < minimumContributor[1]) {
-				minimumContributor[0] = fromIndices[i];
-				minimumContributor[1] = rho;
-			}
-			tempArray[fromIndices[i]] = 1;
-		}
+	IloIntArray fromIndices = findIndices(fromExtend);
+	IloNum toSize = toIndices.getSize(), fromSize = fromIndices.getSize();
+	IloNumArray toRhos(env, toSize);
+	IloNum fromMin, toMin;
 
-		tempArray[minimumContributor[0]] = 0;
-		remVal	= f(tempArray, a, d, omega);
-				
-		for(i = 0; i < toIndices.getSize(); i++) {
-			tempArray[toIndices[i]] = 1;
-			rho = f(tempArray, a, d, omega) - remVal;
-			if(minimumContributor[1] > rho) {
-				canExtend = false;
+	for(i = 0; fromSize > 0 ; i++) {
+		IloNumArray fromRhos(env,fromSize);
+
+		for(i = 0; i < fromSize; i++) 
+			fromRhos[i] = computeRho(fromExtend, fromIndices[i], fromIndices[i], a, d, omega);
+		
+		fromMin = IloMin(fromRhos);
+
+		for(i = 0; i < fromSize; i++) {
+			if(fromRhos[i] == fromMin) {
+				fromIndex = i;
 				break;
 			}
-			tempArray[toIndices[i]] = 0;
 		}
+		
+		for(i = 0; i < toSize; i++)
+			toRhos[i] = computeRho(fromExtend, toIndices[i], fromIndices[fromIndex], a, d, omega);
 
-		if(canExtend){
-			extendedPack[minimumContributor[0]] = 1;
-			fromExtend[minimumContributor[0]] = 0;
+		toMin = IloMin(toRhos);
+
+		if (fromMin < toMin + delta) {
+			extendedPack[fromIndices[fromIndex]] = 1;
+			fromExtend[fromIndices[fromIndex]] = 0;
+			fromIndices = findIndices(fromExtend);
+			fromSize = fromIndices.getSize();
+			delta = delta - IloMax(fromMin - toMin, 0);
 		}
-	}
-
+		else
+			break;
+		}
 	return extendedPack;
 }
 
@@ -689,15 +700,17 @@ ILOUSERCUTCALLBACK7(separatePackInequalities,
 					   currentPack = makeMaximal(currentPack, getRow(a,rowId), getRow(d,rowId), omega, b[rowId]);
 				   packComplement = getComplement(currentPack);
 				   
-				   IloRange	cut;
-				   try {
-					   cut = (IloScalProd(packComplement,cplexSolution) >= 1);
-					   add(cut).end();
-				   }
+				   if(IloScalProd(packComplement,X) < 1 - EPSI) {
+					   IloRange	cut;
+					   try {
+						   cut = (IloScalProd(packComplement,cplexSolution) >= 1);
+						   add(cut).end();
+					   }
 				   
-				   catch(...) {
-					   cut.end();
-					   throw;
+					   catch(...) {
+						   cut.end();
+						   throw;
+					   }
 				   }
 			   }
 		   }
@@ -781,17 +794,14 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 			   for (i = 0; i < packs.getSize(); i++) {
 				   rowId = rowIds[i];
 				   currentPack		= getRow(packs, i);
-				   //env.out() << "The Original Pack Inequality is .. " << (IloScalProd(getComplement(currentPack),cplexSolution) >= 1)  << endl;
 				   currentA			= getRow(a,rowId);
 				   currentD			= getRow(d,rowId);
 				   if(useMaximal)
 					   currentPack = makeMaximal(currentPack, currentA, currentD, omega, b[rowId]);
 				   packComplement	= getComplement(currentPack);
-				   //env.out() << "The Maximal Pack Inequality is .. " << (IloScalProd(packComplement,cplexSolution) >= 1)  << endl;
 				   rhs				= IloSum(packComplement);
-				   extended			= extendPackIneq(packComplement, currentA, currentD, omega);
+				   extended			= extendPackIneq(packComplement, currentA, currentD, omega, b[rowId]);
 				   rhs				= IloSum(extended) - rhs + 1;
-				   //env.out() << "The Extended Pack Inequality is .. " << (IloScalProd(extended,cplexSolution) >= rhs)  << endl;
 				   
 				   IloRange	cut;
 				   try {
@@ -821,18 +831,20 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 					   currentPack = makeMaximal(currentPack, currentA, currentD, omega, b[rowId]);
 				   packComplement	= getComplement(currentPack);
 				   rhs				= IloSum(packComplement);
-				   extended			= extendPackIneq(packComplement, currentA, currentD, omega);
+				   extended			= extendPackIneq(packComplement, currentA, currentD, omega, b[rowId]);
 				   rhs				= IloSum(extended) - rhs + 1;
 				   
-				   IloRange	cut;
-				   try {
-					   cut = (IloScalProd(extended,cplexSolution) >= rhs);
-					   add(cut).end();
-				   }
+				   if(IloScalProd(extended,X) < rhs - EPSI) {
+					   IloRange	cut;
+					   try {
+						   cut = (IloScalProd(extended,cplexSolution) >= rhs);
+						   add(cut).end();
+					   }
 				   
-				   catch(...) {
-					   cut.end();
-					   throw;
+					   catch(...) {
+						   cut.end();
+						   throw;
+					   }
 				   }
 			   }
 		   }
@@ -858,7 +870,7 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 				   packComplement	= getComplement(currentPack);
 				   //env.out() << "The Maximal Pack Inequality is .. " << (IloScalProd(packComplement,cplexSolution) >= 1)  << endl;
 				   rhs				= IloSum(packComplement);
-				   extended			= extendPackIneq(packComplement, currentA, currentD, omega);
+				   extended			= extendPackIneq(packComplement, currentA, currentD, omega, b[rowId]);
 				   rhs				= IloSum(extended) - rhs + 1;
 				   if(IloScalProd(X,packComplement) < 1 - EPS) {
 					   IloRange	cut;
@@ -964,7 +976,7 @@ int
 
 		  // Change between buildCplexModel() and buildCplexModel2();
 
-		  buildCplexModel2(model, variables, temp, a, d, b, 
+		  buildCplexModel(model, variables, temp, a, d, b, 
 										omega, c, nRows, nCols);
 
 		  // Solve CPLEX standard model

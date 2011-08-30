@@ -1,12 +1,12 @@
 // -------------------------------------------------------------- -*- C++ -*-
-// File: subModularKnapsack.cpp
+// File: submodularPacks.cpp
 // @author: Avinash Bhardwaj
 // --------------------------------------------------------------------------
 // Property of Berkeley Computational Optimization Group,
 // University of California, Berkeley
 // --------------------------------------------------------------------------
 //
-// subModularKnapsack.cpp - Performance testing of the pack and extended pack
+// submodularPacks.cpp -	Performance testing of the pack and extended pack
 //							inequalities against the CPLEX 12.3 standard and
 //							outer approximation procedures for submodular knap-
 //							sack problem with non-increasing set functions.
@@ -32,23 +32,34 @@ REMARK :					As soon as you apply any control callbacks cplex by
 */
 
 
+#define EPS		1e-4
+#define bigM	1e4;
+
 #include <ilcplex/ilocplex.h>
-#include <time.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <time.h> 
+#include <math.h>
+
+//@var		nCuts					:	To store the number of user cuts added.
+//@var		rootRelaxationObjValue	:	To store the objective value of the root relaxation.
+
+IloInt nCuts;
+IloNum rootRelaxationObjValue; 
 
 ILOSTLBEGIN
 
-#define EPSILON 1e-4
+//@method	usage					:	To specify the usage error
+static void 
+	usage (const char *progname) {
+		cerr << "Usage: " << progname << " <Output File> -c <CutsType> -a <AlgoType>" << endl;
+		cerr << "      <Output File>          Output file to summarize the computation results. (Default: Same name as input file)" << endl;
+		cerr << "      <CutsType>	          The type of cuts to use, 0: no cuts, 1: Packs, 2: Extended Packs. (Default: 0)" << endl;
+		cerr << "      <AlgoType>	          The type of cover algorithm to use, 0: QCP Algorithm, 1: Sorting Algorithm. (Default: 0)" << endl << endl;
+		cerr << " Exiting..." << endl;
+} // END usage
 
-typedef IloArray<IloIntArray>    IntMatrix;
-typedef IloArray<IloNumVarArray> NumVarMatrix;
-
-void 
-	usage(const char* name) {
-		cerr << endl;
-		cerr << "usage:   " << name << " <input file>" <<  " <output file>" << endl;
-		cerr << endl;
-}
-
+//@method	findIndices				:	To find indices of the TRUE enteries of a binary array
 IloIntArray 
 	findIndices(IloNumArray binaryArray) {
 		IloEnv env = binaryArray.getEnv();
@@ -63,17 +74,19 @@ IloIntArray
 		return indices;
 }
 
+//@method	f						:	To find the value of the function f := a*x + omega*norm(d*x)
 IloNum 
-	f(IloNumArray	arcs,
+	f(IloNumArray	x,
 	  IloNumArray	a,
 	  IloNumArray	d_sq,
 	  IloNum		omega) {
 	
 	IloNum value = 0;
-	value = IloScalProd(arcs,a) + omega*sqrt(IloScalProd(arcs,d_sq));
+	value = IloScalProd(a,x) + omega*sqrt(IloScalProd(d_sq,x));
 	return value;
 }
 
+//@method	getComplement			:	To find the complement of a binary array
 IloNumArray
 	getComplement(IloNumArray binaryArray) {
 		IloEnv env = binaryArray.getEnv();
@@ -85,6 +98,7 @@ IloNumArray
 		return binaryArrayComp;
 }
 
+//@method	alreadyExists			:	To identify if a row already exists in a matrix.
 bool
 	alreadyExists(IloNumArray	pack,
 				  IloNumArray2	packs) {
@@ -113,6 +127,8 @@ bool
 	return isSame;
 }
 
+
+//@method	getRow					:	To retrive a rowId'th row of a matrix.
 IloNumArray
 	getRow(IloNumArray2 matrix,
 		   IloInt		rowId) {
@@ -126,13 +142,13 @@ IloNumArray
 	return vector;
 }
 
-IloNumArray2
+//@method	getPack					:	To retrive a pack for the conic quadratic constraint.
+IloNumArray
 	getPack(IloNumArray		a,
 			IloNumArray		d,
 			IloNum			b,
 			IloNum			omega,
-			IloNumArray		xbar,
-			IloNumArray2	packs) {
+			IloNumArray		xbar) {
 
 	int i;
 	IloEnv		env			= a.getEnv();
@@ -147,7 +163,7 @@ IloNumArray2
 	IloIntVarArray isInPack(env, nCols, 0, 1);
 	IloNumVar temp(env,0,IloInfinity,ILOFLOAT); 
 	packModel.add(IloMinimize(env,IloSum(xbar) - IloScalProd(xbar,isInPack)));
-	packModel.add(b + 0.01 - IloScalProd(a,isInPack) == temp);
+	packModel.add(b + EPS - IloScalProd(a,isInPack) == temp);
 	packModel.add(temp*temp <= pow(omega,2) * IloScalProd(d_sq,isInPack));
 	packModel.add(isInPack);
 
@@ -160,29 +176,18 @@ IloNumArray2
 	for (i = 0; i < nCols; i++) {
 		pack[i] = IloRound(pack[i]);
 	}
-
-	IloNumArray toCheck = getComplement(pack);
-	if (cplexPack.getObjValue() < 1 && !alreadyExists(toCheck, packs)) {
-		IloNumArray2 toReturn(env,packs.getSize() + 1);
-		for (i = 0; i < packs.getSize(); i++) {
-			toReturn[i] = packs[i];
-		}
-		toReturn[i] = toCheck;
-		return toReturn;
-	}
-
-	else {
-		return packs;
-	}
+	
+	return pack;
 
 	cplexPack.end();
 }
 
+//@method	extendPack					:	To extend a pack inequality for the conic quadratic constraint.
 IloNumArray
-	extendPack(IloNumArray	toExtend,
-			   IloNumArray	a,
-			   IloNumArray	d,
-			   IloNum		omega) {
+	extendPackIneq(IloNumArray	toExtend,
+				   IloNumArray	a,
+				   IloNumArray	d,
+				   IloNum		omega) {
 
 	int i, j;
 	
@@ -228,8 +233,7 @@ IloNumArray
 
 		tempArray[minimumContributor[0]] = 0;
 		remVal	= f(tempArray, a, d_sq, omega);
-		
-		
+				
 		for(i = 0; i < toIndices.getSize(); i++) {
 			tempArray[toIndices[i]] = 1;
 			rho = f(tempArray, a, d_sq, omega) - remVal;
@@ -249,6 +253,7 @@ IloNumArray
 	return extendedPack;
 }
 
+//@method	buildCplexModel				:	To build the CPLEX Model from given parameters.
 void
 	buildCplexModel(IloModel			cplexModel,
 					IloNumVarArray		cplexSolution,
@@ -290,68 +295,177 @@ void
 	}
 }
 
-ILOUSERCUTCALLBACK3(CtCallback, 
-					IloNumArray2,	coefficients, 
-					IloNumVarArray, variables, 
-					IloNumArray,	rhs) {
-   IloInt n = rhs.getSize();
-   for (IloInt i = 0; i < n; i++) {
-      IloNum xrhs = rhs[i];
-      if (xrhs < IloInfinity  &&  getValue(IloScalProd(coefficients[i],variables)) < xrhs) {
-         IloRange cut;
-         try {
-            cut = (IloScalProd(coefficients[i],variables) >= xrhs);
-            add(cut).end();
-            rhs[i] = IloInfinity;
-         }
-         catch (...) {
-            cut.end();
-            throw;
-         }
-      }
+ILOUSERCUTCALLBACK5(separatePackInequalities,
+					IloNumVarArray,		cplexSolution,
+					const IloNumArray2, a,
+					const IloNumArray2, d,
+					const IloNumArray,	b, 
+					const IloNum,		omega) {
+   if (getNnodes() == 0) {
+	   try {
+		   IloEnv env		=	getEnv();
+		   IloInt cutAdded	=	0;
+		   IloInt i			=	0;
+		   IloInt nRows		=	b.getSize();
+		   IloInt nCols		=	cplexSolution.getSize();
+
+		   IloNumArray			X(env, nCols), newPack(env), packComplement(env);
+		   IloNumArray2			packs(env);
+		   
+		   getValues(X,cplexSolution);
+
+
+		   // get rootRelaxationObjValue first
+		   IloInt numNodes = getNnodes();
+		   if (numNodes == 0) {
+			   rootRelaxationObjValue = getObjValue();
+		   }
+
+		   for (i = 0; i < nRows; i++) {
+			   newPack = getPack(getRow(a,i), getRow(d,i), b[i], omega, X);
+				  if(!alreadyExists(newPack, packs)) 
+					  packs.add(newPack);
+		   }
+
+		   for (i = 0; i < packs.getSize(); i++) {
+			   packComplement = getComplement(getRow(packs,i));
+			   if(IloScalProd(X,packComplement) < 1) {
+				   IloRange	cut;
+				   try {
+					   cut = (IloScalProd(packComplement,cplexSolution) >= 1);
+					   add(cut).end();
+					   nCuts++;
+				   }
+				   catch(...) {
+					   cut.end();
+					   throw;
+				   }
+			   }
+		   }
+	   }
+	   catch (IloException &e) {
+		   cerr << "Error in separatePackInequalities Callback: " << e << endl;
+		   throw;
+	   }
    }
+}
+
+
+ILOUSERCUTCALLBACK5(separateExtendedPackInequalities,
+					IloNumVarArray,		cplexSolution,
+					const IloNumArray2, a,
+					const IloNumArray2, d,
+					const IloNumArray,	b, 
+					const IloNum,		omega) {
+   if (getNnodes() == 0) {
+	   try {
+		   IloEnv env		=	getEnv();
+		   IloInt cutAdded	=	0;
+		   IloInt i			=	0;
+		   IloInt nRows		=	b.getSize();
+		   IloInt nCols		=	cplexSolution.getSize();
+
+		   IloNumArray			X(env, nCols), newPack(env), packComplement(env), rowIds(env);
+		   IloNumArray2			packs(env);
+		   
+		   getValues(X,cplexSolution);
+
+
+		   // get rootRelaxationObjValue first
+		   IloInt numNodes = getNnodes();
+		   if (numNodes == 0) {
+			   rootRelaxationObjValue = getObjValue();
+		   }
+		   
+		   for (i = 0; i < nRows; i++) {
+			   newPack = getPack(getRow(a,i), getRow(d,i), b[i], omega, X);
+				  if(!alreadyExists(newPack, packs)) { 
+					  packs.add(newPack);
+					  rowIds.add(i);
+				  }
+		   }
+
+		   IloNumArray	extended(env, nCols);
+		   IloNum		rowId, rhs;
+		   for (i = 0; i < packs.getSize(); i++) {
+			   packComplement	= getComplement(getRow(packs,i));
+			   rowId			= rowIds[i];
+			   extended			= extendPackIneq(packComplement, getRow(a, rowId), getRow(d, rowId), omega);
+			   rhs				= IloSum(extended) - IloSum(packComplement) + 1;
+			   if(IloScalProd(X,packComplement) < 1) {
+				   IloRange	cut;
+				   try {
+					   cut = (IloScalProd(extended, cplexSolution) >= rhs);
+					   add(cut).end();
+					   nCuts++;
+				   }
+				   catch(...) {
+					   cut.end();
+					   throw;
+				   }
+			   }
+		   }
+	   }
+	   catch (IloException &e) {
+		   cerr << "Error in separateExtendedPackInequalities Callback: " << e << endl;
+		   throw;
+	   }
+   }
+}
+
+
+//callback to find rootRelaxationObjValue 
+//when no cuts are added
+ILOUSERCUTCALLBACK0(getRootRelaxationObjValue){
+    IloInt numNodes = getNnodes();
+    if (numNodes == 0){
+        rootRelaxationObjValue = getObjValue();
+    }
 }
 
 int
 	main(int argc, char **argv)
 {
 	static IloEnv env;
-	static IloNumArray2 a(env);
-	static IloNumArray2 d(env);
-	static IloNumArray b(env);
-	static IloNum omega;
-	static IloNumArray c(env);
-	static ofstream fout_standard, fout_packs, fout_extendedPacks, fcout_packs, fcout_extendedPacks;
-	int i;
-	time_t start, end, start_p, end_p, start_exp, end_exp;
 
 	try {
-		  static IloNumArray relaxSol(env);
-		  char input[100]			= "../Data/";
-		  char s_output[100]			= "../StandardOutPutLogs/";
-		  char p_output[100]			= "../PackOutPutLogs/";
-		  char exp_output[100]		= "../ExtendedPackOutPutLogs/";
-		  char packInequalities[100]	= "../PackInequalities/";
-		  char exPackInequalities[100]	= "../ExtendedPackInequalities/";
-		  char lp_files[100]			= "../LP-files/";
-		  const char* input_file		= strcat(strcat(input,argv[1]),".dat");
-		  const char* s_output_file		= strcat(strcat(s_output,argv[2]),".log");
-		  const char* p_output_file		= strcat(strcat(p_output,argv[2]),".log");
-		  const char* exp_output_file	= strcat(strcat(exp_output,argv[2]),".log");
-		  const char* p_cuts_file		= strcat(strcat(packInequalities,argv[2]),".log");
-		  const char* exp_cuts_file		= strcat(strcat(exPackInequalities,argv[2]),".log");
-		  const char* lp_file		= strcat(strcat(lp_files,argv[2]),".lp");
-
+		  static IloNumArray2 a(env);
+		  static IloNumArray2 d(env);
+		  static IloNumArray b(env);
+		  static IloNum omega;
+		  static IloNumArray c(env);
+		  static FILE * fout;
+		  int i, cutsType = 0, coverSeparationAlgo = 0;
+		  time_t start, end;
+		  double gap, cpuTime, objValue;
+		  
+		  char input[100]		= "../Data/";
+		  char output[100]		= "../ComputationSummary/";
+		  const char* input_file = strcat(strcat(input,argv[1]),".dat");
+		  const char* output_file = strcat(strcat(output,argv[1]),".log");
+		  
 		  const char* filename  = input_file;
+
+		  for (i = 2; i < argc-1; i++) { //command line options
+			  if (!strncmp(argv[i],  "-c", 2) ) {
+				  cutsType = atoi(argv[++i]); //The type of cuts to use, 0: no cuts, 1: Packs, 2: Extended Packs'
+			  }
+
+			  if (!strncmp(argv[i],  "-a", 2)) {
+				  coverSeparationAlgo = atoi(argv[++i]); //The type of cover algorithm to use, 0: QCP Algorithm, 1: Sorting Algorithm 
+			  }
+		  }
+
 		  ifstream file(filename);
 		  if (!file) {
 			 cerr << "ERROR: could not open file '" << filename
 				  << "' for reading" << endl;
 			 usage(argv[0]);
+			 exit(1);
 			 throw(-1);
 		  }
 
-		  fout_standard.open(s_output_file);
+		  fout = fopen(output_file, "w");
 		  file >> omega >> c >> b >> a >> d;
 
 		  IloInt nRows = b.getSize();
@@ -371,195 +485,94 @@ int
 			  }
 		  }
 		  
-		  // Build CPLEX standard model
+		  // Build CPLEX model
 
-		  IloModel			cplexModel(env);
+		  IloModel			model(env);
 		  IloNumVarArray	temp(env);
-		  IloNumVarArray	cplexSolution(env);
-		  buildCplexModel(cplexModel, cplexSolution, temp, a, d, b, 
+		  IloNumVarArray	variables(env);
+		  buildCplexModel(model, variables, temp, a, d, b, 
 										omega, c, nRows, nCols);
 
 		  // Solve CPLEX standard model
 
-		  IloCplex cplexStandard(cplexModel);
-		  cplexStandard.setOut(fout_standard);
-		  IloNumArray cplexSolutionStandard(env);
-
-		  cplexStandard.exportModel(lp_file);
-
-		  time (&start);
-		  cplexStandard.solve();
-		  time (&end);
-		  
-		  cplexStandard.out() << endl << endl;
-		  cplexStandard.out() << "Solution Status = " << cplexStandard.getStatus() << endl;
-		  cplexStandard.getValues(cplexSolutionStandard,cplexSolution);
-		  cplexStandard.out() << "Solution = " << findIndices(cplexSolutionStandard) << endl;
-		  cplexStandard.out() << "Solution Objective Value = " << cplexStandard.getObjValue() << endl;
-		  cplexStandard.out() << "The Time taken for optimizing the problem: " << difftime(end,start) << " seconds" << endl;
-		  cplexStandard.out() << "The total Number of Branch and Bound Nodes Processed: " << cplexStandard.getNnodes() << endl << endl;
-
-		  // Solving the linear relaxation of the Original Cplex Model
-		  cplexStandard.clear();
-		  IloConversion toContinous = IloConversion(env, cplexSolution, ILOFLOAT);
-		  cplexModel.add(toContinous);
-		  cplexStandard.extract(cplexModel);
-		  IloNumArray solution(env);
-		  cplexStandard.setOut(env.getNullStream());
-
-		  time(&start);
-		  cplexStandard.solve();
-		  time(&end);
-
-		  cplexStandard.out() << endl << endl;
-		  cplexStandard.out() << "Solution Status = " << cplexStandard.getStatus() << endl;
-		  cplexStandard.getValues(solution,cplexSolution);
-		  cplexStandard.out() << "Solution = " << solution << endl;
-		  cplexStandard.out() << "Solution Objective Value = " << cplexStandard.getObjValue() << endl;
-		  cplexStandard.out() << "The Time taken for optimizing the problem: " << difftime(end,start) << " seconds" << endl;
+		  IloCplex cplex(env);
+		  cplex.setOut(env.getNullStream());
 		  
 		  
-		  // Finding the packs //
-
-		  IloNumArray2	packs(env);
-		  IloRangeArray	packIneq(env);
-		  IloNumArray	rowIDs(env);
-		  IloNumArray	packRhs(env);	
-		  IloInt		packsOriginal, packsFinal = 0;
-		  do {
-			  packsOriginal = packsFinal;
-			  for (i = 0; i < nRows; i++) {
-				  packsFinal = packs.getSize();
-				  packs = getPack(getRow(a,i), getRow(d,i), b[i], omega, solution, packs);
-				  //cplexStandard.out() << endl << endl << packs << endl;
-				  if (packsFinal < packs.getSize())
-					  rowIDs.add(i);
-			  }
-
-			  packsFinal = packs.getSize();
-
-			  for (i = packsOriginal; i < packsFinal; i++) {
-				  packRhs.add(1);
-				  packIneq.add(IloScalProd(packs[i],cplexSolution) >= 1);
-			  }
+		  cplex.extract(model);
 		  
-			  cplexModel.add(packIneq);
-			  cplexStandard.clear();
-			  cplexStandard.extract(cplexModel);
-			  
-			  time(&start);
-			  cplexStandard.solve();
-			  time(&end);
-			  
-			  cplexStandard.out() << endl << endl;
-			  cplexStandard.out() << "Solution Status = " << cplexStandard.getStatus() << endl;
-			  cplexStandard.getValues(solution,cplexSolution);
-			  cplexStandard.out() << "Solution = " << solution << endl;
-			  cplexStandard.out() << "Solution Objective Value = " << cplexStandard.getObjValue() << endl;
-			  cplexStandard.out() << "The Time taken for optimizing the problem: " << difftime(end,start) << " seconds" << endl;
-		  
-		  } 
-		  while(packsOriginal != packsFinal);
-		  
-		  fcout_packs.open(p_cuts_file);
-		  fcout_packs << "Total Pack Inequalities Found : " << packsFinal << endl << endl;
-		  for(i = 0; i < packsFinal; i++)
-			  fcout_packs << packIneq[i] << endl << endl;
+		  // Setting the CPLEX Parameters
 
-		  // Extending the packs //
+		  cplex.setParam(IloCplex::HeurFreq, -1);
+		  cplex.setParam(IloCplex::MIQCPStrat, 1);
+		  cplex.setParam(IloCplex::TiLim, 1800);
+		  cplex.setParam(IloCplex::TreLim, 100);
+		  cplex.setParam(IloCplex::MIPSearch, IloCplex::Traditional);
+		  cplex.setParam(IloCplex::Threads, 1);
 		  
-		  IloNumArray2	extendedPacks(env, packsFinal);
-		  IloRangeArray extendedPackIneq(env);
-		  IloNumArray extendedPackRhs(env, packsFinal);
-		  for (i = 0; i < packsFinal; i++) {
-			  extendedPacks[i] = extendPack(packs[i], getRow(a,rowIDs[i]), getRow(d,rowIDs[i]), omega);
-			  extendedPackRhs[i] = IloSum(extendedPacks[i]) - IloSum(packs[i]) + 1;
-			  extendedPackIneq.add(IloScalProd(extendedPacks[i],cplexSolution) >= extendedPackRhs[i]);
+		  /*
+		  cplex.setParam(IloCplex::MIPInterval, 1000);
+		  cplex.setParam(IloCplex::EpGap, 1e-09);
+		  cplex.setParam(IloCplex::PolishAfterEpGap, 1e-09);
+		  cplex.setParam(IloCplex::BarEpComp, 1e-12);
+		  cplex.setParam(IloCplex::BarQCPEpComp, 1e-12);
+		  cplex.setParam(IloCplex::MIPDisplay, 2);
+		  cplex.setParam(IloCplex::MIPInterval, 1);
+		  cplex.setParam(IloCplex::BarDisplay, 1);
+		  cplex.setParam(IloCplex::FlowCovers, -1);
+		  cplex.setParam(IloCplex::GUBCovers, -1);
+		  cplex.setParam(IloCplex::FracCuts, -1);
+		  cplex.setParam(IloCplex::FlowPaths, -1);
+		  cplex.setParam(IloCplex::DisjCuts, -1);
+		  cplex.setParam(IloCplex::Covers, -1);
+		  cplex.setParam(IloCplex::Cliques, -1);
+		  cplex.setParam(IloCplex::ImplBd, -1);
+		  cplex.setParam(IloCplex::MCFCuts, -1);
+		  cplex.setParam(IloCplex::MIRCuts, -1);
+		  cplex.setParam(IloCplex::ZeroHalfCuts, -1);
+		  cplex.setParam(IloCplex::EachCutLim, 0);
+		  cplex.setParam(IloCplex::CutPass, -1);
+		  cplex.setParam(IloCplex::TuningDisplay, 3);
+		  cplex.setParam(IloCplex::MPSLongNum, 0);
+		  */		  
+		  
+		  if (cutsType == 0) {
+			  cplex.use(getRootRelaxationObjValue(env));
 		  }
-
-		  fcout_extendedPacks.open(exp_cuts_file);
-		  fcout_extendedPacks << "Extended Pack Inequalities" << endl << endl;
-		  for(i = 0; i < extendedPackIneq.getSize(); i++)
-			  fcout_extendedPacks << extendedPackIneq[i] << endl << endl;
-
-
-		  cplexStandard.clear();
-		  cplexModel.remove(packIneq);
-		  cplexModel.add(extendedPackIneq);
-		  cplexStandard.extract(cplexModel);
 		  
-		  time(&start);
-		  cplexStandard.solve();
-		  time(&end);
+		  if (cutsType == 1) {
+			  cplex.use(separatePackInequalities(env,variables,a,d,b,omega));
+		  }
+			
+		  if (cutsType == 2) {
+			  cplex.use(separateExtendedPackInequalities(env,variables,a,d,b,omega));
+		  }
 		  
-		  cplexStandard.out() << endl << endl;
-		  cplexStandard.out() << "Solution Status = " << cplexStandard.getStatus() << endl;
-		  cplexStandard.getValues(solution,cplexSolution);
-		  cplexStandard.out() << "Solution = " << solution << endl;
-		  cplexStandard.out() << "Solution Objective Value = " << cplexStandard.getObjValue() << endl;
-		  cplexStandard.out() << "The Time taken for optimizing the problem: " << difftime(end,start) << " seconds" << endl;
-
-		  // Reimposing Integer constraints
+		  start		= clock();
+		  cplex.solve();
+		  end		= clock();
 		  
-		  cplexModel.remove(IloConversion(toContinous));		  
-		  cplexModel.remove(extendedPackIneq);
+		  objValue	= cplex.getObjValue();
+		  gap		= 100*(objValue - rootRelaxationObjValue)/(objValue);
+		  cpuTime	= (double)(end - start) / CLOCKS_PER_SEC;
+		  if (cplex.getStatus() == IloAlgorithm::Optimal)
+			  fprintf (fout,"Solution Status =  OPTIMAL \n");
+		  else
+			  fprintf (fout,"Solution Status =  NOT OPTIMAL \n");
+
+		  fprintf (fout,"Objective Value =  %.3f \n", objValue);
+		  fprintf (fout,"Number of Nodes =  %d \n", cplex.getNnodes());
+		  fprintf (fout,"Number of User Cuts =  %d \n", nCuts);
+		  fprintf (fout,"Root Relaxation Gap =  %.3f \n", gap);
+		  fprintf (fout,"CPUTime =  %.3f \n", cpuTime);
 		  
-		  // Build CPLEX model with pack inequalities
-		  
-		  IloCplex cplexPacks(env);
-		  cplexPacks.clear();
-		  
-		  cplexPacks.extract(cplexModel);
-
-		  cplexPacks.use(CtCallback(env, packs, cplexSolution, packRhs));
-
-		  fout_packs.open(p_output_file);
-		  cplexPacks.setOut(fout_packs);
-		  cplexPacks.setParam(IloCplex::Threads, 8);
-
-		  time(&start_p);
-		  cplexPacks.solve();
-		  time(&end_p);
-		  
-		  cplexPacks.out() << endl << endl;
-		  cplexPacks.out() << "Solution Status = " << cplexPacks.getStatus() << endl;
-		  cplexPacks.getValues(solution,cplexSolution);
-		  cplexPacks.out() << "Solution = " << findIndices(solution) << endl;
-		  cplexPacks.out() << "Solution Objective Value = " << cplexPacks.getObjValue() << endl;
-		  cplexPacks.out() << "The Time taken for optimizing the problem: " << difftime(end_p,start_p) << " seconds" << endl;
-		  cplexPacks.out() << "The total Number of Branch and Bound Nodes Processed: " << cplexPacks.getNnodes() << endl << endl;
-
-		  // Build CPLEX model with extended pack inequalities
-
-		  IloModel	cplexExtendedPackModel(env);
-		  cplexExtendedPackModel.add(cplexModel);
-		  
-		  IloCplex cplexExtendedPacks(cplexExtendedPackModel);
-		  
-		  cplexExtendedPacks.use(CtCallback(env, extendedPacks, cplexSolution, extendedPackRhs));
-
-		  fout_extendedPacks.open(exp_output_file);
-		  cplexExtendedPacks.setOut(fout_extendedPacks);
-		  cplexExtendedPacks.setParam(IloCplex::Threads, 8);
-
-		  time(&start_exp);
-		  cplexExtendedPacks.solve();
-		  time(&end_exp);
-
-		  cplexExtendedPacks.out() << endl << endl;
-		  cplexExtendedPacks.out() << "Solution Status = " << cplexExtendedPacks.getStatus() << endl;
-		  cplexExtendedPacks.getValues(solution,cplexSolution);
-		  cplexExtendedPacks.out() << "Solution = " << findIndices(solution) << endl;
-		  cplexExtendedPacks.out() << "Solution Objective Value = " << cplexExtendedPacks.getObjValue() << endl;
-		  cplexExtendedPacks.out() << "The Time taken for optimizing the problem: " << difftime(end_exp,start_exp) << " seconds" << endl;
-		  cplexExtendedPacks.out() << "The total Number of Branch and Bound Nodes Processed: " << cplexExtendedPacks.getNnodes() << endl << endl;
-
-
-		  cplexStandard.end(); cplexPacks.end(); cplexExtendedPacks.end();
+		  cplex.end();
+		  fclose(fout);
 	}
 	catch (IloException& e) {
 		cerr << "Concert exception caught: " << e << endl;
 	}
+
 	env.end();
 	return 0;
 }  // END main

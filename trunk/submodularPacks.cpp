@@ -146,20 +146,6 @@ bool
 }
 
 
-//@method	getRow					:	To retrive a rowId'th row of a matrix.
-IloNumArray
-	getRow(IloNumArray2 matrix,
-		   IloInt		rowId) {
-	IloEnv env = matrix.getEnv();
-	int i, n = matrix[0].getSize();
-	IloNumArray vector(env, n);
-
-	for (i = 0; i < n; i++)
-		vector[i] = matrix[rowId][i];
-
-	return vector;
-}
-
 void 
 	swap (int& x, 
 		  int& y ) {
@@ -642,7 +628,7 @@ ILOUSERCUTCALLBACK7(separatePackInequalities,
 		   }
 		   if(coverAlgo == 1) {
 			   for (i = 0; i < nRows; i++) {
-				   newPack = getPackUsingSort(getRow(a,i), getRow(d,i), b[i], omega, X);
+				   newPack = getPackUsingSort(a[i], d[i], b[i], omega, X);
 				   if(IloSum(newPack) > 0 && !alreadyExists(newPack, packs)) {
 						  packs.add(newPack);
 						  rowIds.add(i);
@@ -651,9 +637,9 @@ ILOUSERCUTCALLBACK7(separatePackInequalities,
 
 			   for (i = 0; i < packs.getSize(); i++) {
 				   rowId = rowIds[i];
-				   currentPack = getRow(packs, i);
+				   currentPack = packs[i];
 				   if(useMaximal)
-					   makeMaximal(currentPack, getRow(a,rowId), getRow(d,rowId), omega, b[rowId]);
+					   makeMaximal(currentPack, a[rowId], d[rowId], omega, b[rowId]);
 				   packComplement = getComplement(currentPack);
 				   
 				   IloRange	cut;
@@ -671,14 +657,14 @@ ILOUSERCUTCALLBACK7(separatePackInequalities,
 
 		   else if(coverAlgo == 2) {
 			   for (i = 0; i < nRows; i++) {
-				   getPackUsingSort2(packs ,rowIds, i, getRow(a,i), getRow(d,i), b[i], omega, X);
+				   getPackUsingSort2(packs ,rowIds, i, a[i], d[i], b[i], omega, X);
 			   }
 
 			   for (i = 0; i < packs.getSize(); i++) {
 				   rowId = rowIds[i];
-				   currentPack = getRow(packs, i);
+				   currentPack = packs[i];
 				   if(useMaximal)
-					   makeMaximal(currentPack, getRow(a,rowId), getRow(d,rowId), omega, b[rowId]);
+					   makeMaximal(currentPack, a[rowId], d[rowId], omega, b[rowId]);
 				   packComplement = getComplement(currentPack);
 				   
 				   if(IloScalProd(packComplement,X) < 1 - EPSI) {
@@ -698,7 +684,7 @@ ILOUSERCUTCALLBACK7(separatePackInequalities,
 
 		   else {
 			   for (i = 0; i < nRows; i++) {
-				   newPack = getPack(getRow(a,i), getRow(d,i), b[i], omega, X);
+				   newPack = getPack(a[i], d[i], b[i], omega, X);
 				   if(IloSum(newPack) > 0 && !alreadyExists(newPack, packs)) {
 						  packs.add(newPack);
 						  rowIds.add(i);
@@ -707,9 +693,9 @@ ILOUSERCUTCALLBACK7(separatePackInequalities,
 
 			   for (i = 0; i < packs.getSize(); i++) {
 				   rowId = rowIds[i];
-				   currentPack = getRow(packs, i);
+				   currentPack = packs[i];
 				   if(useMaximal)
-					   makeMaximal(currentPack, getRow(a,rowId), getRow(d,rowId), omega, b[rowId]);
+					   makeMaximal(currentPack, a[rowId], d[rowId], omega, b[rowId]);
 				   
 				   packComplement = getComplement(currentPack);
 				   if(IloScalProd(X,packComplement) < 1 - EPS) {
@@ -765,7 +751,7 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 		   }
 		   if(coverAlgo == 1) {
 			   for (i = 0; i < nRows; i++) {
-				   newPack = getPackUsingSort(getRow(a,i), getRow(d,i), b[i], omega, X);
+				   newPack = getPackUsingSort(a[i], d[i], b[i], omega, X);
 				   if(IloSum(newPack) > 0 && !alreadyExists(newPack, packs)) {
 						  packs.add(newPack);
 						  rowIds.add(i);
@@ -774,9 +760,9 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 			   
 			   for (i = 0; i < packs.getSize(); i++) {
 				   rowId = rowIds[i];
-				   currentPack		= getRow(packs, i);
-				   currentA			= getRow(a,rowId);
-				   currentD			= getRow(d,rowId);
+				   currentPack		= packs[i];
+				   currentA			= a[rowId];
+				   currentD			= d[rowId];
 				   if(useMaximal)
 					   makeMaximal(currentPack, currentA, currentD, omega, b[rowId]);
 				   packComplement	= getComplement(currentPack);
@@ -799,14 +785,14 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 
 		   else if (coverAlgo == 2) {			   
 			   for (i = 0; i < nRows; i++) {
-				   getPackUsingSort2(packs ,rowIds, i, getRow(a,i), getRow(d,i), b[i], omega, X);
+				   getPackUsingSort2(packs ,rowIds, i, a[i], d[i], b[i], omega, X);
 			   }
 
 			   for (i = 0; i < packs.getSize(); i++) {
 				   rowId = rowIds[i];
-				   currentPack		= getRow(packs, i);
-				   currentA			= getRow(a,rowId);
-				   currentD			= getRow(d,rowId);
+				   currentPack		= packs[i];
+				   currentA			= a[rowId];
+				   currentD			= d[rowId];
 				   if(useMaximal)
 					   makeMaximal(currentPack, currentA, currentD, omega, b[rowId]);
 				   packComplement	= getComplement(currentPack);
@@ -831,7 +817,7 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 
 		   else {
 			   for (i = 0; i < nRows; i++) {
-				   newPack = getPack(getRow(a,i), getRow(d,i), b[i], omega, X);
+				   newPack = getPack(a[i], d[i], b[i], omega, X);
 				   if(IloSum(newPack) > 0 && !alreadyExists(newPack, packs)) { 
 						  packs.add(newPack);
 						  rowIds.add(i);
@@ -841,10 +827,10 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 			   IloNum		rowId;
 			   for (i = 0; i < packs.getSize(); i++) {
 				   rowId = rowIds[i];
-				   currentPack		= getRow(packs, i);
+				   currentPack		= packs[i];
 				   //env.out() << "The Original Pack Inequality is .. " << (IloScalProd(getComplement(currentPack),cplexSolution) >= 1)  << endl;
-				   currentA			= getRow(a,rowId);
-				   currentD			= getRow(d,rowId);
+				   currentA			= a[rowId];
+				   currentD			= d[rowId];
 				   if(useMaximal)
 					   makeMaximal(currentPack, currentA, currentD, omega, b[rowId]);
 				   packComplement	= getComplement(currentPack);

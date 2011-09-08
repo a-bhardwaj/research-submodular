@@ -77,9 +77,9 @@ IloIntArray
 	findIndices(IloNumArray binaryArray) {
 		IloEnv env = binaryArray.getEnv();
 		IloIntArray indices(env,IloSum(binaryArray));
-		int l=0;
-		for(int i = 0; i < binaryArray.getSize(); i++){
-			if(binaryArray[i] == 1){
+		int i, l=0;
+		for(i = 0; i < binaryArray.getSize(); i++){
+			if(binaryArray[i]){
 				indices[l] = i;
 				l++;
 			}
@@ -94,16 +94,14 @@ IloNum
 	  IloNumArray	d,
 	  IloNum		omega) {
 	
-	IloEnv	env		= a.getEnv();
 	IloNum	nCols	= a.getSize();
-	IloNumArray		d_sq(env,nCols);
+	int i;
 
-	for (int i = 0; i < nCols; i++) {
-		d_sq[i] = pow(d[i], 2);
-	}
+	IloNum value = 0, varValue = 0;
+	for (i = 0; i < nCols; i++)
+		varValue += x[i]*d[i]*d[i];
 
-	IloNum value = 0;
-	value = IloScalProd(a,x) + omega*sqrt(IloScalProd(d_sq,x));
+	value = IloScalProd(a,x) + omega*sqrt(varValue);
 	return value;
 }
 
@@ -124,7 +122,6 @@ bool
 	alreadyExists(IloNumArray	pack,
 				  IloNumArray2	packs) {
 	
-	IloEnv env = packs.getEnv();
 	bool isSame = false;
 	int nRows = packs.getSize(), nCols;
 	if (nRows > 0){
@@ -172,12 +169,11 @@ void
    y = temp; 
 }
 
-IloNumArray 
-	bubbleSort (IloNumArray Array) { 
+void 
+	bubbleSort (IloNumArray Array, IloNumArray order) {
    IloInt size = Array.getSize();
    int last = size - 2; 
    int isChanged = 1;
-   IloNumArray order(Array.getEnv(), size);
    for(int i = 0; i < size; i++)
 	   order[i] = i;
    while ( last >= 0 && isChanged) 
@@ -192,20 +188,8 @@ IloNumArray
                } 
            last--; 
    }
-   return order;
-}  
-
-void 
-	addRow(IloNumArray2 addTo, 
-		   IloNumArray toAdd) {
-	IloEnv env = addTo.getEnv();
-	int size = addTo.getSize();
-	int arraySize = toAdd.getSize();
-	IloNumArray temp(env, arraySize);
-	addTo.add(temp);
-	for (int i = 0; i < arraySize; i++)
-		addTo[size][i] = toAdd[i];
 }
+
 
 IloNumArray 
 	getSubsets2(IloNumArray	Array, 
@@ -246,7 +230,7 @@ IloNumArray
 		return pack;
 	}
 	else
-		return IloNumArray(env);
+		return IloNumArray(env, nCols);
 }
 
 //@method	getPacksUsingSort		:	To retrive a pack for the conic quadratic constraint using Greedy Algorithm.
@@ -263,9 +247,9 @@ void
 	IloEnv	env		= xbar.getEnv();
 	IloNum	nCols	= xbar.getSize();
 
-	IloNumArray arrayToSort(env, nCols), order(env);
+	IloNumArray arrayToSort(env, nCols), order(env, nCols);
 
-	IloNumArray	newPack(env);
+	IloNumArray	newPack(env, nCols);
 	IloNumArray c(env, nCols);
 	for (i = 0; i < nCols; i++) {
 		c[i] = pow(omega*d[i],2);
@@ -283,9 +267,9 @@ void
 				for (k = 0; k < nCols; k++) {
 					arrayToSort[k] = xbar[k]/(lambda*a[k] + mu*c[k] + pow(EPS,2));
 				}
-				order	= bubbleSort(arrayToSort);
+				bubbleSort(arrayToSort, order);
 				newPack = getSubsets2(xbar, order, 1, a, d, b, omega);
-				if(newPack.getSize() > 0 && !alreadyExists(newPack, packs)) {
+				if(IloSum(newPack) > 0 && !alreadyExists(newPack, packs)) {
 					packs.add(newPack);
 					rowIds.add(row);
 				}
@@ -338,7 +322,7 @@ IloNumArray
 		return pack;
 	}
 	else
-		return IloNumArray(env);
+		return IloNumArray(env,nCols);
 }
 
 //@method	getPacksUsingSort		:	To retrive a pack for the conic quadratic constraint using Greedy Algorithm.
@@ -357,7 +341,8 @@ IloNumArray
 		arrayToSort[i] = xbar[i];
 
 	// Sort and get the sorted order
-	IloNumArray order	= bubbleSort(arrayToSort);
+	IloNumArray order(env, nCols);
+	bubbleSort(arrayToSort,order);
 	//env.out() << "Array \t\t order \t a \t\t d\t " << b << endl << endl; 
 	for (i = 0; i < nCols; i++) {
 	/*env.out() << arrayToSort[i] << "\t\t"<< order[i]
@@ -394,7 +379,7 @@ IloNumArray
 
 	IloCplex cplexPack(packModel);
 	cplexPack.setOut(env.getNullStream());
-	IloNumArray pack(env);
+	IloNumArray pack(env, nCols);
 	cplexPack.solve();
 	
 	if (cplexPack.getStatus() == IloAlgorithm::Optimal) {
@@ -410,7 +395,7 @@ IloNumArray
 }
 
 //@method	makeMaximal					:	To make the pack maximal.
-IloNumArray
+void
 	makeMaximal(IloNumArray toExtend,
 				IloNumArray	a,
 				IloNumArray	d,
@@ -418,27 +403,21 @@ IloNumArray
 				IloNum		b) {
 	int i;
 
-	IloEnv env		= toExtend.getEnv();
 	IloNum nCols	= a.getSize();
 	IloNumArray fromExtend	= getComplement(toExtend);
-	IloNumArray maximalPack(env, nCols);
-
-	for(i = 0; i < nCols; i++)
-		maximalPack[i] = toExtend[i];
-
+	
 	IloIntArray fromIndices = findIndices(fromExtend);
 	
 	for(i = 0; i < fromIndices.getSize(); i++) {
 		if (a[fromIndices[i]] == 0) {
-			maximalPack[fromIndices[i]] = 1;
+			toExtend[fromIndices[i]] = 1;
 			continue;
 		}
-		maximalPack[fromIndices[i]] = 1;
-		if(f(maximalPack, a , d, omega) <= b) {
-			maximalPack[fromIndices[i]] = 0;
+		toExtend[fromIndices[i]] = 1;
+		if(f(toExtend, a , d, omega) <= b) {
+			toExtend[fromIndices[i]] = 0;
 		}
 	}
-	return maximalPack;
 }
 
 IloNum 
@@ -525,6 +504,8 @@ IloNumArray
 		}
 		else
 			break;
+
+		fromRhos.end();
 		}
 	return extendedPack;
 }
@@ -644,7 +625,7 @@ ILOUSERCUTCALLBACK7(separatePackInequalities,
 		   IloInt nRows		=	b.getSize();
 		   IloInt nCols		=	cplexSolution.getSize();
 
-		   IloNumArray			X(env, nCols), newPack(env), packComplement(env), currentPack(env);
+		   IloNumArray			X(env, nCols), newPack(env, nCols), packComplement(env, nCols), currentPack(env, nCols);
 		   IloIntArray			rowIds(env);
 		   IloNumArray2			packs(env);
 		   
@@ -662,7 +643,7 @@ ILOUSERCUTCALLBACK7(separatePackInequalities,
 		   if(coverAlgo == 1) {
 			   for (i = 0; i < nRows; i++) {
 				   newPack = getPackUsingSort(getRow(a,i), getRow(d,i), b[i], omega, X);
-				   if(newPack.getSize() > 0 && !alreadyExists(newPack, packs)) {
+				   if(IloSum(newPack) > 0 && !alreadyExists(newPack, packs)) {
 						  packs.add(newPack);
 						  rowIds.add(i);
 					  }
@@ -672,7 +653,7 @@ ILOUSERCUTCALLBACK7(separatePackInequalities,
 				   rowId = rowIds[i];
 				   currentPack = getRow(packs, i);
 				   if(useMaximal)
-					   currentPack = makeMaximal(currentPack, getRow(a,rowId), getRow(d,rowId), omega, b[rowId]);
+					   makeMaximal(currentPack, getRow(a,rowId), getRow(d,rowId), omega, b[rowId]);
 				   packComplement = getComplement(currentPack);
 				   
 				   IloRange	cut;
@@ -697,7 +678,7 @@ ILOUSERCUTCALLBACK7(separatePackInequalities,
 				   rowId = rowIds[i];
 				   currentPack = getRow(packs, i);
 				   if(useMaximal)
-					   currentPack = makeMaximal(currentPack, getRow(a,rowId), getRow(d,rowId), omega, b[rowId]);
+					   makeMaximal(currentPack, getRow(a,rowId), getRow(d,rowId), omega, b[rowId]);
 				   packComplement = getComplement(currentPack);
 				   
 				   if(IloScalProd(packComplement,X) < 1 - EPSI) {
@@ -718,7 +699,7 @@ ILOUSERCUTCALLBACK7(separatePackInequalities,
 		   else {
 			   for (i = 0; i < nRows; i++) {
 				   newPack = getPack(getRow(a,i), getRow(d,i), b[i], omega, X);
-				   if(newPack.getSize() > 0 && !alreadyExists(newPack, packs)) {
+				   if(IloSum(newPack) > 0 && !alreadyExists(newPack, packs)) {
 						  packs.add(newPack);
 						  rowIds.add(i);
 				   }
@@ -728,7 +709,7 @@ ILOUSERCUTCALLBACK7(separatePackInequalities,
 				   rowId = rowIds[i];
 				   currentPack = getRow(packs, i);
 				   if(useMaximal)
-					   currentPack = makeMaximal(currentPack, getRow(a,rowId), getRow(d,rowId), omega, b[rowId]);
+					   makeMaximal(currentPack, getRow(a,rowId), getRow(d,rowId), omega, b[rowId]);
 				   
 				   packComplement = getComplement(currentPack);
 				   if(IloScalProd(X,packComplement) < 1 - EPS) {
@@ -768,10 +749,10 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 		   IloInt nRows		=	b.getSize();
 		   IloInt nCols		=	cplexSolution.getSize();
 
-		   IloNumArray	X(env, nCols), extended(env, nCols), packComplement(env), newPack(env), currentPack(env);
+		   IloNumArray	X(env, nCols), extended(env, nCols), packComplement(env, nCols), newPack(env, nCols), currentPack(env,nCols);
 		   IloIntArray	rowIds(env);
 		   IloNumArray2	packs(env);
-		   IloNumArray currentA(env), currentD(env);
+		   IloNumArray currentA(env, nCols), currentD(env, nCols);
 
 		   int i, j, rhs, rowId;
 		   getValues(X,cplexSolution);
@@ -785,7 +766,7 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 		   if(coverAlgo == 1) {
 			   for (i = 0; i < nRows; i++) {
 				   newPack = getPackUsingSort(getRow(a,i), getRow(d,i), b[i], omega, X);
-				   if(newPack.getSize() > 0 && !alreadyExists(newPack, packs)) {
+				   if(IloSum(newPack) > 0 && !alreadyExists(newPack, packs)) {
 						  packs.add(newPack);
 						  rowIds.add(i);
 					  }
@@ -797,7 +778,7 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 				   currentA			= getRow(a,rowId);
 				   currentD			= getRow(d,rowId);
 				   if(useMaximal)
-					   currentPack = makeMaximal(currentPack, currentA, currentD, omega, b[rowId]);
+					   makeMaximal(currentPack, currentA, currentD, omega, b[rowId]);
 				   packComplement	= getComplement(currentPack);
 				   rhs				= IloSum(packComplement);
 				   extended			= extendPackIneq(packComplement, currentA, currentD, omega, b[rowId]);
@@ -821,14 +802,13 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 				   getPackUsingSort2(packs ,rowIds, i, getRow(a,i), getRow(d,i), b[i], omega, X);
 			   }
 
-			   IloNumArray currentA(env), currentD(env);
 			   for (i = 0; i < packs.getSize(); i++) {
 				   rowId = rowIds[i];
 				   currentPack		= getRow(packs, i);
 				   currentA			= getRow(a,rowId);
 				   currentD			= getRow(d,rowId);
 				   if(useMaximal)
-					   currentPack = makeMaximal(currentPack, currentA, currentD, omega, b[rowId]);
+					   makeMaximal(currentPack, currentA, currentD, omega, b[rowId]);
 				   packComplement	= getComplement(currentPack);
 				   rhs				= IloSum(packComplement);
 				   extended			= extendPackIneq(packComplement, currentA, currentD, omega, b[rowId]);
@@ -852,7 +832,7 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 		   else {
 			   for (i = 0; i < nRows; i++) {
 				   newPack = getPack(getRow(a,i), getRow(d,i), b[i], omega, X);
-				   if(newPack.getSize() > 0 && !alreadyExists(newPack, packs)) { 
+				   if(IloSum(newPack) > 0 && !alreadyExists(newPack, packs)) { 
 						  packs.add(newPack);
 						  rowIds.add(i);
 					  }
@@ -866,7 +846,7 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
 				   currentA			= getRow(a,rowId);
 				   currentD			= getRow(d,rowId);
 				   if(useMaximal)
-					   currentPack	= makeMaximal(currentPack, currentA, currentD, omega, b[rowId]);
+					   makeMaximal(currentPack, currentA, currentD, omega, b[rowId]);
 				   packComplement	= getComplement(currentPack);
 				   //env.out() << "The Maximal Pack Inequality is .. " << (IloScalProd(packComplement,cplexSolution) >= 1)  << endl;
 				   rhs				= IloSum(packComplement);

@@ -249,7 +249,7 @@ void
 				continue;
 			lambda	= (c[j]*xbar[i] - c[i]*xbar[j])/(c[j]*a[i] - c[i]*a[j]);
 			mu		= (a[j]*xbar[i] - a[i]*xbar[j])/(c[i]*a[j] - c[j]*a[i]);
-			if(lambda <= -EPS && mu <= -EPS) {
+			//if(lambda <= -EPS && mu <= -EPS) {
 				for (k = 0; k < nCols; k++) {
 					arrayToSort[k] = xbar[k]/(lambda*a[k] + mu*c[k] + pow(EPS,2));
 				}
@@ -259,7 +259,7 @@ void
 					packs.add(newPack);
 					rowIds.add(row);
 				}
-			}
+			//}
 		}
 	}
 }

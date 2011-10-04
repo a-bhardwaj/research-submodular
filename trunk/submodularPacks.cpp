@@ -76,11 +76,11 @@ static void
 IloIntArray 
 	findIndices(IloNumArray binaryArray) {
 		IloEnv env = binaryArray.getEnv();
-		IloIntArray indices(env,IloSum(binaryArray));
+		IloIntArray indices(env);
 		int i, l=0;
 		for(i = 0; i < binaryArray.getSize(); i++){
 			if(binaryArray[i]){
-				indices[l] = i;
+				indices.add(i);
 				l++;
 			}
 		}
@@ -496,6 +496,95 @@ IloNumArray
 	return extendedPack;
 }
 
+IloNum findLiftCoeff(IloNumArray packcomp,
+					 IloNumArray J,
+					 IloNumArray pack,
+					 IloNumArray packIndices,
+					 IloNumArray coeffs,
+					 IloNumArray a,
+					 IloNumArray d,
+					 IloNum omega,
+					 IloNum b,
+					 int k){
+	IloNum coeff;
+	int j,l;
+	pack[k] = 0;
+	l = 0;
+	IloEnv env = a.getEnv();
+	int nCols = a.getSize();
+	IloNumVar tempvar(env, 0, IloInfinity);
+	IloIntVarArray x(env, nCols, 0, 1);
+	IloModel liftmodel(env);
+	IloCplex liftCplex(env);
+	liftmodel.add(x);
+	IloConstraint cons1, cons2;
+	IloExpr mean(env), var(env), obj(env);
+	obj = IloScalProd(packcomp,x);
+	for(j = 0; j < nCols; j++) {
+		if(J[j]) {
+			obj += -coeffs[j]*(1-x[j]);
+		}
+		if(pack[j]) {
+			mean += a[j];
+			var += d[j]*d[j];
+		}
+
+		if(packcomp[j] || J[j]) {
+			mean += a[j]*x[j];
+			var += d[j]*d[j]*x[j]*x[j];
+		}
+	}
+
+	liftmodel.add(IloMinimize(env,obj));
+	cons1 = (tempvar <= b - mean);
+	cons2 = (tempvar*tempvar >= omega*omega*var);
+
+	liftmodel.add(cons1);
+	liftmodel.add(cons2);
+	liftCplex.extract(liftmodel);
+	liftCplex.setOut(env.getNullStream());
+	liftCplex.solve();
+
+	coeff = liftCplex.getObjValue() - 1;
+	IloNumArray vals(env);
+	liftCplex.getValues(vals,x);
+	x.endElements(); x.end(); liftmodel.end(); liftCplex.end(); cons1.end(); cons2.end();
+	mean.end(); var.end(); obj.end(); vals.end();
+	return coeff;
+}
+
+
+IloNumArray
+	liftPackIneq(IloNumArray packcomp, 
+				 IloNumArray a, 
+				 IloNumArray d, 
+				 IloNum		omega, 
+				 IloNum		b) {
+	int i, j, k, l;
+	IloEnv env		= packcomp.getEnv();
+	IloNum nCols	= a.getSize();
+	IloNumArray packIndices(env);
+	IloNumArray pack(env,nCols);
+	IloNumArray J(env,nCols);
+	IloNumArray coeffs(env,nCols);
+	
+	for(i = 0; i < nCols; i++) {
+		J[i] = 0;
+		coeffs[i] = 0;
+		if(a[i] && !packcomp[i]) {
+			packIndices.add(i);
+			pack[i] = 1;
+		}
+		else
+			pack[i] = 0;
+	}
+	for(i = 0; i < packIndices.getSize(); i++) {
+		k = packIndices[i];
+		coeffs[k] = findLiftCoeff(packcomp,J,pack,packIndices,coeffs,a,d,omega,b,k);
+			J[k] = 1;
+	}
+	return coeffs;
+}
 void
 	buildCplexModel2(IloModel			cplexModel,
 					IloNumVarArray		cplexSolution,
@@ -859,13 +948,81 @@ ILOUSERCUTCALLBACK7(separateExtendedPackInequalities,
    }
 }
 
+ILOUSERCUTCALLBACK5(separateLiftedPackInequalities,
+					IloNumVarArray,		cplexSolution,
+					const IloNumArray2, a,
+					const IloNumArray2, d,
+					const IloNumArray,	b, 
+					const IloNum,		omega) {
+   if (getNnodes() == 0) {
+	   try {
+		   IloEnv env		=	getEnv();
+		   IloInt cutAdded	=	0;
+		   IloInt nRows		=	b.getSize();
+		   IloInt nCols		=	cplexSolution.getSize();
+
+		   IloNumArray	X(env, nCols), extended(env, nCols), packComplement(env, nCols), currentPack(env,nCols);
+		   IloNumArray  coeffs(env,nCols);
+		   IloIntArray	rowIds(env);
+		   IloNumArray2	packs(env);
+		   IloNumArray currentA(env, nCols), currentD(env, nCols);
+
+		   int i, j, rhs, rowId;
+		   getValues(X,cplexSolution);
+
+		   IloInt numNodes = getNnodes();
+			if (numNodes == 0){
+				rootRelaxationObjValue = getBestObjValue();
+			}
+
+		   for (i = 0; i < nRows; i++) {
+				   getPackUsingSort2(packs ,rowIds, i, a[i], d[i], b[i], omega, X);
+			}
+
+			for (i = 0; i < packs.getSize(); i++) {
+				rowId = rowIds[i];
+				currentPack		= packs[i];
+				currentA			= a[rowId];
+				currentD			= d[rowId];
+				makeMaximal(currentPack, currentA, currentD, omega, b[rowId]);
+				packComplement	= getComplement(currentPack);
+				coeffs			= liftPackIneq(packComplement,currentA,currentD,omega,b[rowId]);
+				rhs	= IloSum(coeffs) + 1;
+				if(IloScalProd(packComplement,X) + IloScalProd(coeffs,X) < rhs - EPSI) {
+					IloRange	cut;
+					try {
+					   cut = (IloScalProd(packComplement,cplexSolution) + IloScalProd(coeffs,cplexSolution) >= rhs);
+					   add(cut).end();
+					}
+					
+					catch(...) {
+						cut.end();
+						throw;
+					}
+				}
+			}
+	   }
+
+	   catch (IloException &e) {
+		   cerr << "Error in separateExtendedPackInequalities Callback: " << e << endl;
+		   throw;
+	   }
+   }
+}
 
 //callback to find rootRelaxationObjValue 
 //when no cuts are added
-ILOUSERCUTCALLBACK0(getRootRelaxationObjValue){
+ILOMIPINFOCALLBACK0(getRootRelaxationObjValue){
     IloInt numNodes = getNnodes();
     if (numNodes == 0){
-        rootRelaxationObjValue = getObjValue();
+        rootRelaxationObjValue = getBestObjValue();
+    }
+}
+
+ILOLAZYCONSTRAINTCALLBACK0(getRootRelaxationObjValueLazy){
+    IloInt numNodes = getNnodes();
+    if (numNodes == 0){
+        rootRelaxationObjValue = getBestObjValue();
     }
 }
 
@@ -881,7 +1038,7 @@ int
 		  static IloNum omega;
 		  static IloNumArray c(env);
 		  static ofstream fout;
-		  int i, cutsType = 0, coverSeparationAlgo = 0, useMaximal = 0;
+		  int i, cutsType = 2, coverSeparationAlgo = 2, useMaximal = 1, useLifted = 1;
 		  time_t start, end;
 		  double gap, cpuTime, objValue;
 		  
@@ -971,6 +1128,12 @@ int
 		  cplex.setParam(IloCplex::MIPDisplay, 2);
 		  cplex.setParam(IloCplex::MIPInterval, 1);
 		  cplex.setParam(IloCplex::BarDisplay, 1);
+		  
+		  cplex.setParam(IloCplex::PreInd,0);
+		  cplex.setParam(IloCplex::RelaxPreInd,0);
+		  cplex.setParam(IloCplex::PreslvNd,-1);
+		  cplex.setParam(IloCplex::Reduce,0);
+
 		  cplex.setParam(IloCplex::FlowCovers, -1);
 		  cplex.setParam(IloCplex::GUBCovers, -1);
 		  cplex.setParam(IloCplex::FracCuts, -1);
@@ -983,21 +1146,30 @@ int
 		  cplex.setParam(IloCplex::MIRCuts, -1);
 		  cplex.setParam(IloCplex::ZeroHalfCuts, -1);
 		  cplex.setParam(IloCplex::EachCutLim, 0);
-		  cplex.setParam(IloCplex::CutPass, -1);
+		  /*cplex.setParam(IloCplex::CutPass, -1);
 		  cplex.setParam(IloCplex::TuningDisplay, 3);
 		  cplex.setParam(IloCplex::MPSLongNum, 0);
 		  */		  
 		  
 		  if (cutsType == 0) {
 			  cplex.use(getRootRelaxationObjValue(env));
+			  cplex.use(getRootRelaxationObjValueLazy(env));
 		  }
 		  
 		  if (cutsType == 1) {
 			  cplex.use(separatePackInequalities(env,variables,a,d,b,omega,coverSeparationAlgo,useMaximal));
+			  cplex.use(getRootRelaxationObjValueLazy(env));
 		  }
 			
 		  if (cutsType == 2) {
-			  cplex.use(separateExtendedPackInequalities(env,variables,a,d,b,omega,coverSeparationAlgo,useMaximal));
+			  if(useLifted) {
+				  cplex.use(separateLiftedPackInequalities(env,variables,a,d,b,omega));
+				  cplex.use(getRootRelaxationObjValueLazy(env));
+			  }
+			  else {
+				  cplex.use(separateExtendedPackInequalities(env,variables,a,d,b,omega,coverSeparationAlgo,useMaximal));
+				  cplex.use(getRootRelaxationObjValueLazy(env));
+			  }
 		  }
 		  
 		  start		= clock();
